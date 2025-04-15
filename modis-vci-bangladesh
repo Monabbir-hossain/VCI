@@ -1,0 +1,79 @@
+This was the code
+
+// ------------------- 1. Define Study Area -------------------
+var bangladesh = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level1")
+                    .filter(ee.Filter.eq('ADM0_NAME', 'Bangladesh'));
+
+// ------------------- 2. Load MODIS NDVI Data -------------------
+var modisNDVI = ee.ImageCollection("MODIS/006/MOD13Q1")
+                  .select('NDVI')
+                  .filterBounds(bangladesh);
+
+// ------------------- 3. Setup Years and Months -------------------
+var years = [2000, 2012, 2022];
+var months = [4, 5, 6];  // April, May, June
+var scaleFactor = 0.0001;
+
+// ------------------- 4. Function to Calculate VCI -------------------
+function computeVCI(year, month) {
+  // Historical NDVI for same month across 2000–2022
+  var historical = modisNDVI
+    .filter(ee.Filter.calendarRange(month, month, 'month'))
+    .filter(ee.Filter.calendarRange(2000, 2022, 'year'))
+    .map(function(img) {
+      return img.multiply(scaleFactor);
+    });
+
+  var ndviMin = historical.min();
+  var ndviMax = historical.max();
+
+  // NDVI for selected year/month
+  var targetNDVI = modisNDVI
+    .filter(ee.Filter.calendarRange(year, year, 'year'))
+    .filter(ee.Filter.calendarRange(month, month, 'month'))
+    .median()
+    .multiply(scaleFactor);
+
+  // Compute VCI
+  var vci = targetNDVI.subtract(ndviMin)
+                      .divide(ndviMax.subtract(ndviMin))
+                      .multiply(100)
+                      .clip(bangladesh)
+                      .rename('VCI');
+
+  return vci.set({
+    'month': month,
+    'year': year,
+    'system:index': ee.String('VCI_' + year + '_' + month)
+  });
+}
+
+// ------------------- 5. Generate VCI Images -------------------
+var vciImages = [];
+
+years.forEach(function(year) {
+  months.forEach(function(month) {
+    var vci = computeVCI(year, month);
+    vciImages.push(vci);
+    
+    // Add to Map
+    var monthName = ['April', 'May', 'June'][month - 4];
+    Map.addLayer(vci, {
+      min: 0,
+      max: 100,
+      palette: ['darkred', 'red', 'orange', 'yellow', 'lightgreen', 'green']
+    }, 'VCI ' + monthName + ' ' + year);
+  });
+});
+
+// ------------------- 6. Example Export (Uncomment what you need) -------------------
+Export.image.toDrive({
+   image: vciImages[0],  // VCI for April 2000
+   description: 'VCI_April2022',
+   folder: 'GEE_Exports',
+   fileNamePrefix: 'VCI_April2022',
+   region: bangladesh.geometry(),
+   scale: 250,
+   maxPixels: 1e13
+ });
+
